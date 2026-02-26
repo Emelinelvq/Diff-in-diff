@@ -65,3 +65,9 @@ print(analyse_tendances)
 
 # L'hypothèse UPT ne peut pas être testée directement sur les années post-traitement (2018 et 2019) car nous n'observons pas l'outcome sans traitement Y_t(0) pour les municipalités traitées. Cependant, puisque nous disposons des données pré-traitement (2016-2017), nous pouvons effectuer un pseudo-test de l'UPT. De manière générale, il est préférable de réaliser plusieurs pseudo-tests de l'UPT sur les différentes périodes pré-traitement, afin d'être sûr de l'évolution similaire des deux groupes.
 # Dans notre cas, nous n'avons accès aux données que de deux périodes pré-traitement (2016,2017) ce qui nous permet d'effectuer un seul pseudo-test sur l'évolution entre celles-ci. Si l'UPT est vérifiée sur la période étudiée, alors nous estimerons qu'il est possible que les deux groupes évoluent de manière similaire, et nous partirons de cette (forte) hypothèse pour développer notre analyse. 
+
+
+
+## QUESTION 5 : 
+
+# Nous obtenons un coefficient proche de 0 (-0,002), et une significativité assez élevée (p-value de 0,69). Nous ne sommes donc pas en mesure de refuser l’hypothèse des pentes parallèles. Concrètement, cela signifie que rien ne prouve que les deux groupes ne suivaient pas une évolution similaire entre 2016 et 2017. Nous pouvons donc faire une estimation sous l’hypothèse des pentes parallèles pour les années 2018 et 2019.
