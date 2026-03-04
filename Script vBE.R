@@ -34,7 +34,7 @@ analyse_2016 <- df %>%
 print(analyse_2016)
 
 
-# pas de grosses différences au niveau du nombre de municipalités par groupe, ni de la consommation de bio moyenne des ménages. Par contre une différence un peu plus marquée au niveau de la présence de bio dans les cantines en 2016 (davantage de bio dnas les muniicpalités traitées). La plus grande différence entre les deux groupes est la proportion de municipalités urbaines dans chaque groupe (le groupe 1 est beaucoup plus urbain avec 58% contre 25% dans le groupe 2). Ayant besoin de deux groupes similaires pour évaluer les effets de la politique, cette différence peut être un problème pour comparer les deux groupes. Il faudra probablement utiliser une CATT . 
+# pas de grosses différences au niveau du nombre de municipalités par groupe, ni de la consommation de bio moyenne des ménages. Par contre une différence un peu plus marquée au niveau de la présence de bio dans les cantines en 2016 (davantage de bio dans les muninicpalités traitées). La plus grande différence entre les deux groupes est la proportion de municipalités urbaines dans chaque groupe (le groupe traitement est beaucoup plus urbain avec 58% contre 25% dans le groupe contrôle). Ayant besoin de deux groupes similaires pour évaluer les effets de la politique, cette différence peut être un problème pour comparer les deux groupes. Il faudra probablement utiliser une CATT . 
 
 
 # Analysis without covariates ----
@@ -107,7 +107,7 @@ print(res_pseudo)
 
 ### Question 5: Estimate the ATTs and build a 95% confidence interval for each estimate. Detail carefully the estimation and inference method used. Interpret the results. ----
 
-# ATT 2017-2018 - version "manuelle" -> à faire avec le regression trick 
+#### ATT 2017-2018 - version "manuelle" ----
 
 df <- df %>%
   mutate(delta_organic_2018 = ln_avg_household_organic_2018 - ln_avg_household_organic_2017)
@@ -129,5 +129,82 @@ ATT_UPT_2018 <- mean_delta_organic_treated_2018 - mean_delta_organic_control_201
 print(ATT_UPT_2018)
 
 
+##### ATT 2018 avec régression trick ----
+
+# Sélection des données et format long
+data_18_select <- df %>% select(id, G, ln_avg_household_organic_2017, ln_avg_household_organic_2018)
+
+panel_18 <- as.data.frame(pivot_longer(data_18_select, -c(id, G), 
+                                       values_to = "ln_organic", names_to = "year"))
+
+# Recodage du temps : 0 pour l'année de référence, 1 pour l'année traitée
+panel_18$year[panel_18$year == "ln_avg_household_organic_2017"] <- 0
+panel_18$year[panel_18$year == "ln_avg_household_organic_2018"] <- 1
+panel_18$year <- as.numeric(panel_18$year)
+
+# Régression DID
+reg_18 <- lm(ln_organic ~ G * year, data = panel_18)
+
+# Inférence (Clustered SEs)
+cov_18 <- cluster.vcov(reg_18, panel_18$id, df_correction = FALSE)
+se_18 <- sqrt(diag(cov_18))[4]
+att_18 <- coef(reg_18)[4]
+
+# mêmes résultats qu'avec la version manuelle = OK
+
+##### ATT 2019 (Comparaison 2017 vs 2019) avec régression trick ----
+
+# Sélection des données et format long
+data_19_select <- df %>% select(id, G, ln_avg_household_organic_2017, ln_avg_household_organic_2019)
+
+panel_19 <- as.data.frame(pivot_longer(data_19_select, -c(id, G), 
+                                       values_to = "ln_organic", names_to = "year"))
+
+# Recodage
+panel_19$year[panel_19$year == "ln_avg_household_organic_2017"] <- 0
+panel_19$year[panel_19$year == "ln_avg_household_organic_2019"] <- 1
+panel_19$year <- as.numeric(panel_19$year)
+
+# Régression
+reg_19 <- lm(ln_organic ~ G * year, data = panel_19)
+
+# Inférence
+cov_19 <- cluster.vcov(reg_19, panel_19$id, df_correction = FALSE)
+se_19 <- sqrt(diag(cov_19))[4]
+att_19 <- coef(reg_19)[4]
+
+##### Calcul des Intervalles de Confiance à 95% ----
+alpha <- 0.05
+z_alpha <- qnorm(1 - alpha/2)
+
+ic_18 <- c(att_18 - z_alpha * se_18, att_18 + z_alpha * se_18)
+ic_19 <- c(att_19 - z_alpha * se_19, att_19 + z_alpha * se_19)
+
+# Affichage des résultats
+cat("ATT 2018 :", round(att_18, 4), "SE :", round(se_18, 4), "IC : [", round(ic_18[1], 4), ";", round(ic_18[2], 4), "]\n")
+cat("ATT 2019 :", round(att_19, 4), "SE :", round(se_19, 4), "IC : [", round(ic_19[1], 4), ";", round(ic_19[2], 4), "]\n")
+
+
+### Question 6 : Given the results of Questions 4 and 5, explain whether a DID approach without covariates seems relevant here. ----
+
+# Bien que le pseudo test semble valider l'hypothèse des pentes parallèles, le fait que le groupe traitement soit plus urbain que le groupe contrôle pourrait jouer un rôle sur la différence observée de consommation de bio, et donc sur les résultats. 
+# Utiliser des covariables permettraient d'avoir des résultats plus fiables en éliminant l'effet des facteurs socio-démographiques. 
+
+
+# Analysis with covariates ----
+
+
+## Question 7: Write down the parallel trend assumptions required to identify and estimate the ATTs when one uses a DID approach with covariates. What is the other assumption needed to run a DID analysis with covariates? Verify this second assumption in the data. ----
+
+# vérification de la distribution des covariables 
+
+check_distribution <- df %>%
+  group_by(G, urban, organic_school_canteen) %>%
+  summarise(n = n(), .groups = 'drop') %>%
+  pivot_wider(names_from = G, values_from = n, names_prefix = "G_")
+
+print(check_distribution)
+
+# pour chaque profil de municipalités du groupe traité il y a bien un profil similaire dans le groupe controle. On peut donc procéder à l'ATT sous CPT
 
 
