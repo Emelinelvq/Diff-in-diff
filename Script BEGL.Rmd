@@ -1,0 +1,619 @@
+---
+title: "Rendu DiD - group 3 & 4"
+author: "Emeline, Benoît, Gaultier et Lucie"
+date: "2026-02-20"
+output: html_document
+---
+Packages ----
+```{r, message= FALSE, warning = FALSE}
+library(dplyr)
+library(multiwayvcov)
+library(tidyr)
+library(lmtest)
+library(sandwich)
+```
+
+Load data ----
+```{r}
+load("df_group3.Rda")
+df <- df_group3
+```
+
+# 1 Early stage analysis ----
+### Question 1: 
+Given the description of the policy,build a variable Gi equal to 1 if municipality i belongs to a treated province and 0 otherwise.Run a descriptive statistic analysis to compare the groups {G = 0} and {G = 1}.Are these groups very different in terms of outcomes? If so, is it a problem? Are these groups very different in terms of the other variables? If so, is it a problem? ----
+
+Création de G
+La variable Gi est une variable indicatrice qui prend la valeur 1 si la municipalité i appartient à une province traitée (provinces 2, 3 ou 6), et 0 sinon, c’est-à-dire si la municipalité appartient à une province où la politique n’a pas été mise en place.
+```{r}
+df <- df %>%
+  mutate(G = ifelse(province_index %in% c(2, 3, 6), 1, 0))
+```
+
+
+Comparaison des groupes - avant traitement (2016) 
+On compare les caractéristiques des municipalités traitées et non traitées avant l’introduction de la politique (2016) afin d’évaluer si les deux groupes sont comparables.
+```{r, echo = TRUE}
+analyse_2016 <- df %>%
+  group_by(G) %>%
+  summarise(
+    nb_communes = n(),
+    moyenne_conso_2016 = mean(ln_avg_household_organic_2016, na.rm = TRUE),
+    part_urbain = mean(urban, na.rm = TRUE),
+    part_cantine_2016 = mean(organic_school_canteen, na.rm = TRUE)
+  )
+```
+
+Les statistiques descriptives montrent les résultats suivants :
+```{r, echo = TRUE}
+print(analyse_2016)
+```
+
+On observe que la consommation moyenne de produits biologiques est légèrement plus élevée dans les municipalités traitées (4.98 contre 4.62 en log).Cependant, cette différence de niveau n’est pas nécessairement problématique pour une analyse en différences-de-différences. En effet, la méthode DID ne requiert pas que les groupes aient le même niveau initial d’outcome. L’hypothèse importante est plutôt l’hypothèse de tendances parallèles : en l’absence de traitement, l’évolution de la consommation aurait été la même dans les deux groupes.Une différence de niveau initial est acceptable tant que les tendances pré-traitement sont similaires.
+
+La différence d'urbanisation (58.3% de municipalités urbaines dans le groupe traité et 25.1% dans le groupe contrôle) entre les deux groupes est substantielle et suggère que les municipalités traitées sont beaucoup plus urbaines.Cette différence peut être importante car la littérature montre que les consommateurs urbains ont souvent une demande plus élevée pour les produits biologiques, notamment en raison de revenus plus élevés et d’une meilleure information sur les bénéfices sanitaires de ces produits (Ha, Shakur & Pham Do, 2019).. Si les municipalités urbaines présentent également des tendances différentes d’évolution de la consommation, cela pourrait violer l’hypothèse de tendances parallèles.
+
+On observe aussi une différence plus modérée concernant la présence de cantines scolaires proposant du bio en 2016 (35.5% contre 29.9%). Cette variable peut également être liée à la diffusion de la consommation de produits biologiques.
+
+Ces différences de caractéristiques ne rendent pas l’approche DID impossible, mais elles suggèrent que les municipalités traitées et non traitées ne sont pas parfaitement comparables, et que certaines caractéristiques observables (comme l’urbanisation) pourraient influencer les trajectoires de consommation.
+Pour limiter ce problème, il sera pertinent d’introduire ces variables comme covariables dans l’analyse DID, ou d’estimer des Conditional Average Treatment Effects (CATT) conditionnellement à ces caractéristiques.
+
+# 2 Analysis without covariates ----
+## 2.1 Pseudo-parallel trend tests ----
+### Question 3: 
+Give the definition of the ATT in 2018 and 2019. Suppose we want to use a DID approach without covariates for the moment. How and under which assumption can these ATTs be identified from the observed data?
+
+Pour les années post-traitement t∈{2018,2019}, l’Average Treatment Effect on the Treated (ATT) est défini comme l’effet moyen de la politique pour les municipalités appartenant aux provinces traitées. 
+Formellement : ATT_t = E[Y_t(1) - Y_t(0) | G = 1]. 
+Où :
+
+- Y_t(1) représente le niveau de consommation moyenne de produits biologiques (en log) à l’année t si la municipalité est exposée à la campagne publicitaire,
+
+- Y_t(0) représente le niveau de consommation qui aurait été observé à l’année t en l’absence de campagne,
+Dans les deux cas nous sommes dans le cas G = 1 qui correspond aux municipalités appartenant aux provinces traitées. Y_t(0) n'est donc pas observable dans ce cas.
+
+Y_t(0) n'étant pas observable, pour identifier l'ATT il faut poser l'hypothèse des unconditional parallel trends (UPT), selon laquelle les deux groupes (traité et contrôle) auraient suivi la même trajectoire. C'est-à-dire, la variation contrefactuelle de la consommation entre la période pré-traitement (2017) et la période post-traitement (2018 ou 2019) aurait été identique dans les deux groupes.
+Sous cette hypothèse, on peut utiliser l’évolution observée dans le groupe de contrôle pour approximer l’évolution contrefactuelle du groupe traité. L’ATT devient alors identifiable à partir des données observées. Formellement, pour chaque année t∈{2018, 2019} : 
+E[Y_t(0) - Y_{2017}(0) | G = 1] = E[Y_t(0) - Y_{2017}(0) | G = 0]
+
+Cette expression correspond à la différence entre l’évolution moyenne de l’outcome dans le groupe traité et celle observée dans le groupe contrôle, ce qui constitue l’estimateur DID.
+
+Grâce à l'hypothèse UPT, on peut remplacer l'évolution contrefactuelle inobservable du groupe traité par l'évolution observée du groupe de contrôle. Ainsi, l'ATT devient identifiable à partir des données observées (les variables Y).
+l'ATT est identifié par la "différence des différences" : 
+ATT_t = E(Y_t - Y_{2017} | G = 1) - E(Y_t - Y_{2017} | G = 0)
+
+### Question 4: 
+Explain how you can perform a pseudo test of the parallel trend assumptions between groups {G = 0} and {G = 1} (caution: for each ATT, there is a corresponding UPT assumption to pseudo-test). Write down the tests you want to implement, implement them and comment. ----
+
+L’hypothèse de parallel trends (UPT) ne peut pas être testée directement sur les périodes post-traitement (2018 et 2019), car pour les municipalités traitées nous n’observons pas l’outcome contrefactuel Yt(0).
+Cependant, il est possible d’effectuer un pseudo-test en utilisant uniquement les périodes pré-traitement. L’idée est de vérifier si les deux groupes présentaient déjà des évolutions similaires avant l’introduction de la politique.
+Dans notre cas, les données couvrent deux années pré-traitement : 2016 et 2017. Nous pouvons donc tester si l’évolution moyenne de la consommation de produits biologiques entre ces deux années est identique dans les groupes traité et contrôle.
+
+Plus précisément, pour chaque ATT (2018 et 2019), l’hypothèse UPT implique que :
+E[Y2017(0)−Y2016(0)∣G=1]=E[Y2017(0)−Y2016(0)∣G=0]
+
+Comme ces deux années sont avant le traitement, les outcomes observés correspondent aux outcomes sans traitement. Nous pouvons donc tester empiriquement si :
+E[Y2017−Y2016∣G=1]=E[Y2017−Y2016∣G=0]
+
+On commence par construire la variation de l’outcome entre 2016 et 2017 :
+```{r}
+df$delta_Y_pre <- df$ln_avg_household_organic_2017 - df$ln_avg_household_organic_2016
+```
+
+On estime ensuite la régression suivante :
+ΔYi=α+βGi+εi
+où :
+- ΔYi=Y2017−Y2016
+- Gi indique si la municipalité appartient à une province traitée.
+
+Le coefficient β mesure la différence d’évolution entre les deux groupes.
+Sous l’hypothèse de tendances parallèles, on doit avoir :β=0
+```{r}
+pseudo_test_model <- lm(delta_Y_pre ~ G, data = df) # On régresse cette évolution sur l'appartenance au groupe traité (G)
+
+coeftest(pseudo_test_model, vcov = vcovHC(pseudo_test_model, type = "HC1")) # Affichage des résultats avec des erreurs standards robustes
+```
+Le coefficient estimé est très proche de zéro (-0.002) et la p-value est élevée (0.69).Nous ne pouvons donc pas rejeter l’hypothèse nulle selon laquelle les deux groupes ont connu la même évolution de consommation entre 2016 et 2017.
+Ce résultat suggère qu’avant l’introduction de la campagne publicitaire, les municipalités traitées et non traitées présentaient des tendances similaires dans la consommation de produits biologiques. Bien que ce test ne puisse pas prouver que l’hypothèse de tendances parallèles est strictement vérifiée, il constitue un élément en faveur de la validité de l’approche DID pour estimer les effets de la politique en 2018 et 2019.
+
+## 2.2 Average treatment effect estimation ----
+### Question 5: 
+Estimate the ATTs and build a 95% confidence interval for each estimate. Detail carefully the estimation and inference method used. Interpret the results. 
+
+Nous estimons l’effet moyen du traitement sur les municipalités traitées (ATT) pour 2018 et 2019 à l’aide de l’approche Difference-in-Differences (DID).
+L’idée est de comparer l’évolution de la consommation de produits biologiques entre la période pré-traitement (2017) et les périodes post-traitement (2018 ou 2019) dans les municipalités traitées et dans les municipalités de contrôle.
+
+Pour chaque année t∈{2018,2019}, l’ATT peut s’écrire :
+ATTt = E(Yt - Y2017∣G =1) − E(Yt − Y2017∣G = 0)
+On compare l’évolution moyenne de la consommation dans les municipalités traitées avec l’évolution moyenne dans les municipalités non traitées.
+
+Pour évaluer la précision statistique des estimations, nous construisons des intervalles de confiance à 95 % autour des estimations de l’ATT. L’inférence repose sur les erreurs standards obtenues à partir de la régression DID. Comme les observations d’une même municipalité apparaissent à plusieurs périodes, les termes d’erreur peuvent être corrélés au sein d’une même municipalité. Afin de tenir compte de cette dépendance intra-groupe, les erreurs standards sont clusterisées au niveau de la municipalité. Cette correction permet d’obtenir des estimations robustes de la variance des coefficients lorsque les observations ne sont pas indépendantes au sein d’un même cluster. Une fois l’erreur standard du coefficient d’intérêt obtenue, l’intervalle de confiance à 95 % est construit à l’aide de l’approximation asymptotique normale : 
+IC 95% = ATT^ ± z0.975 × SE^ (ATT^) (ici le ^ correspond au chapeau et non à l'exponentielle)
+où z0.975 est le quantile de la loi normale standard correspondant à un niveau de confiance de 95 %. Cette procédure permet de déterminer un intervalle de valeurs plausibles pour l’effet du traitement et de tester si cet effet est statistiquement différent de zéro.
+
+#### ATT 2017-2018 - Version "manuelle" ----
+Dans un premier temps, l’estimateur DID peut être calculé directement en comparant les variations moyennes de l’outcome entre les deux groupes. Pour cela, on calcule la variation de la consommation pour chaque municipalité entre 2017 et l’année considérée (2018 ou 2019), puis on compare la moyenne de cette variation dans le groupe traité et dans le groupe de contrôle.
+```{r}
+df <- df %>%
+  mutate(delta_organic_2018 = ln_avg_household_organic_2018 - ln_avg_household_organic_2017)
+
+mean_delta_organic_treated_2018 <- 
+  df |>
+  subset( G == 1, select = delta_organic_2018, drop = TRUE) |>
+  mean()
+
+mean_delta_organic_control_2018 <- 
+  df |>
+  subset(G == 0, select = delta_organic_2018, drop = TRUE) |>
+  mean()
+
+# Computation of ATT 
+ATT_UPT_2018 <- mean_delta_organic_treated_2018 - mean_delta_organic_control_2018
+print(ATT_UPT_2018)
+```
+
+##### ATT 2018 avec régression trick ----
+Dans un second temps, l’ATT peut être obtenu de manière équivalente à l’aide d’une régression linéaire, souvent appelée regression trick. Les données sont alors mises au format panel avec deux périodes (2017 et l’année post-traitement) et l’on estime le modèle suivant :
+Yit=α+βGi+γPostt+δ(Gi×Postt)+εit
+où Gi indique si la municipalité appartient au groupe traité et Postt est une variable indicatrice prenant la valeur 1 dans la période post-traitement. Le coefficient de l’interaction 
+Gi×Postt, noté 𝛿, correspond directement à l’estimateur DID et fournit donc une estimation de l’ATT.
+```{r}
+# Sélection des données et format long
+data_18_select <- df %>% select(province_index, G, ln_avg_household_organic_2017, ln_avg_household_organic_2018)
+
+panel_18 <- as.data.frame(pivot_longer(data_18_select, -c(province_index, G), 
+                                       values_to = "ln_organic", names_to = "year"))
+
+# Recodage du temps : 0 pour l'année de référence, 1 pour l'année traitée
+panel_18$year[panel_18$year == "ln_avg_household_organic_2017"] <- 0
+panel_18$year[panel_18$year == "ln_avg_household_organic_2018"] <- 1
+panel_18$year <- as.numeric(panel_18$year)
+
+# Régression DID
+reg_18 <- lm(ln_organic ~ G * year, data = panel_18)
+
+# Inférence (Clustered SEs)
+cov_18 <- cluster.vcov(reg_18, panel_18$province_index, df_correction = FALSE)
+se_18 <- sqrt(diag(cov_18))[4]
+att_18 <- coef(reg_18)[4]
+```
+On retrouve les mêmes résultats qu'avec la version manuelle : 0.58.
+
+##### ATT 2019 (Comparaison 2017 vs 2019) avec régression trick ----
+```{r}
+# Sélection des données et format long
+data_19_select <- df %>% select(province_index, G, ln_avg_household_organic_2017, ln_avg_household_organic_2019)
+
+panel_19 <- as.data.frame(pivot_longer(data_19_select, -c(province_index, G), 
+                                       values_to = "ln_organic", names_to = "year"))
+
+# Recodage
+panel_19$year[panel_19$year == "ln_avg_household_organic_2017"] <- 0
+panel_19$year[panel_19$year == "ln_avg_household_organic_2019"] <- 1
+panel_19$year <- as.numeric(panel_19$year)
+
+# Régression
+reg_19 <- lm(ln_organic ~ G * year, data = panel_19)
+
+# Inférence
+cov_19 <- cluster.vcov(reg_19, panel_19$province_index, df_correction = FALSE)
+se_19 <- sqrt(diag(cov_19))[4]
+att_19 <- coef(reg_19)[4]
+
+##### Calcul des Intervalles de Confiance à 95% ----
+alpha <- 0.05
+z_alpha <- qnorm(1 - alpha/2)
+
+ic_18 <- c(att_18 - z_alpha * se_18, att_18 + z_alpha * se_18)
+ic_19 <- c(att_19 - z_alpha * se_19, att_19 + z_alpha * se_19)
+
+# Affichage des résultats
+cat("ATT 2018 :", round(att_18, 4), "SE :", round(se_18, 4), "IC : [", round(ic_18[1], 4), ";", round(ic_18[2], 4), "]\n")
+cat("ATT 2019 :", round(att_19, 4), "SE :", round(se_19, 4), "IC : [", round(ic_19[1], 4), ";", round(ic_19[2], 4), "]\n")
+```
+
+Les deux effets estimés sont positifs et statistiquement significatifs, puisque les intervalles de confiance n’incluent pas zéro.
+L’outcome étant exprimé en logarithme, les coefficients peuvent être interprétés comme des variations approximatives en pourcentage.
+
+- L’ATT estimé pour 2018 (0.58) indique que la campagne publicitaire a augmenté la consommation moyenne de produits biologiques dans les municipalités traitées d’environ 58 % de plus que dans les municipalités de contrôle entre 2017 et 2018.
+
+- L’ATT estimé pour 2019 (1.16) suggère un effet encore plus important : la consommation de produits biologiques dans les municipalités traitées a augmenté d’environ 116 % de plus que dans les municipalités de contrôle entre 2017 et 2019.
+
+Ces résultats semblent montrer que la campagne publicitaire semble avoir eu un effet positif et croissant dans le temps sur la consommation de produits biologiques. L’effet est déjà important dès 2018 et devient encore plus marqué en 2019, ce qui pourrait refléter un effet cumulatif ou une diffusion progressive de l’information auprès des consommateurs.
+
+### Question 6 : 
+Given the results of Questions 4 and 5, explain whether a DID approach without covariates seems relevant here. 
+
+Pour évaluer la pertinence d’une approche DID sans covariables, il faut examiner si les hypothèses nécessaires à l’identification des effets du traitement sont plausibles au vu des résultats obtenus précédemment.
+
+Dans la Question 4, nous avons réalisé un pseudo-test de l’hypothèse de tendances parallèles (UPT) en utilisant les périodes pré-traitement (2016 et 2017). Le coefficient estimé mesurant la différence d’évolution entre les municipalités traitées et non traitées est très proche de zéro et statistiquement non significatif (p-value élevée). Nous ne pouvons donc pas rejeter l’hypothèse selon laquelle les deux groupes suivaient des trajectoires similaires avant l’introduction de la politique. Ce résultat constitue un argument en faveur de la validité de l’hypothèse de tendances parallèles.
+
+Dans la Question 5, l’estimation DID montre des effets positifs et statistiquement significatifs de la campagne publicitaire sur la consommation de produits biologiques. Les estimations indiquent une augmentation importante de la consommation dans les municipalités traitées relativement aux municipalités de contrôle après l’introduction de la politique.
+
+Cependant, l’analyse descriptive réalisée dans la Question 1 a mis en évidence certaines différences entre les deux groupes, notamment en termes de niveau d’urbanisation et de présence de cantines scolaires proposant des produits biologiques. Ces caractéristiques peuvent influencer la consommation de produits bio et pourraient également être associées à des dynamiques différentes d’évolution dans le temps.
+
+Ainsi, même si les résultats du pseudo-test ne remettent pas en cause l’hypothèse de tendances parallèles, l’existence de différences observables entre les groupes suggère que l’approche DID sans covariables pourrait être imparfaite. En particulier, si ces caractéristiques sont corrélées avec l’évolution de la consommation, elles pourraient introduire un biais dans l’estimation des effets du traitement.
+
+En conclusion, l’approche DID sans covariables semble raisonnablement pertinente au vu des tests de tendances parallèles, mais il serait préférable d’introduire des covariables dans l’analyse afin d’améliorer la comparabilité entre les groupes et renforcer la crédibilité des estimations.
+
+# 3 Analysis with covariates ----
+Les deux variables urban and organic_school_canteen can serve as covariates here.
+
+### Question 7: 
+Write down the parallel trend assumptions required to identify and estimate the ATTs when one uses a DID approach with covariates. What is the other assumption needed to run a DID analysis with covariates? Verify this second assumption in the data. 
+
+Lorsque l’on utilise une approche Difference-in-Differences avec covariables, l’hypothèse de tendances parallèles doit être reformulée en conditionnant par les covariables observées.
+
+Dans notre cas, les covariables sont urbani and organic_school_canteeni.
+On note Xi le vecteur de ces covariables.
+
+L’identification des ATT repose sur l’hypothèse de Conditional Parallel Trends (CPT). Cette hypothèse stipule que, conditionnellement aux covariables Xi, l’évolution moyenne de l’outcome aurait été la même dans les groupes traité et contrôle en l’absence de traitement.
+
+Formellement, pour t ∈ {2018,2019} : 
+E[Yt(0) − Y2017(0) ∣ G = 1, Xi] = E[Yt(0) − Y2017(0)∣ G = 0, Xi]
+Autrement dit, une fois que l’on compare des municipalités ayant les mêmes caractéristiques observables, les trajectoires de consommation de produits biologiques auraient évolué de manière similaire dans les groupes traité et contrôle en l’absence de la politique.
+
+Une seconde hypothèse est nécessaire pour identifier les ATT avec covariables : l’hypothèse d’overlap (ou support commun). Cette hypothèse exige que pour chaque combinaison de covariables observée dans le groupe traité, il existe également des observations correspondantes dans le groupe contrôle.
+Formellement :0 < P (G = 1 ∣ Xi) <1
+Cela garantit qu’il existe des municipalités comparables entre les deux groupes pour chaque profil de covariables.
+
+Pour vérifier cette hypothèse, on examine la distribution des covariables dans les groupes traité et contrôle.
+```{r}
+check_distribution <- df %>%
+  group_by(G, urban, organic_school_canteen) %>%
+  summarise(n = n(), .groups = 'drop') %>%
+  pivot_wider(names_from = G, values_from = n, names_prefix = "G_")
+
+print(check_distribution)
+```
+Cette table permet de vérifier que chaque combinaison des covariables (urban, organic_school_canteen) observée dans le groupe traité apparaît également dans le groupe contrôle.
+Les résultats montrent que pour chaque profil de municipalité présent dans le groupe traité, il existe des municipalités similaires dans le groupe de contrôle. L’hypothèse de support commun semble donc raisonnablement satisfaite dans les données.
+
+### Question 8 :
+Do you think this regression is well-suited to identify both the ATTs in 2018 and 2019? (hint: what may be the limitation of this regression if the ATTs at the two dates are not equal?) Which coefficient of this regression is supposed to capture treatment effects? Estimate the ATTs with this regression and build a 95% confidence interval (do not forget to cluster standard errors at the municipality level).
+
+Dans cette régression, le coefficient δ mesure l’effet du traitement.
+
+Cependant, cette spécification présente une limitation importante : elle impose que l’effet du traitement soit identique en 2018 et en 2019.
+En effet, la variable 1{t ≥ 2018} regroupe les deux années post-traitement dans une seule période. Par conséquent, l’interaction Gi×1 {t ≥ 2018} ne permet d’estimer qu’un seul effet moyen du traitement pour l’ensemble de la période post-traitement.
+Si les effets du traitement diffèrent entre 2018 et 2019 — ce qui semble plausible au vu des estimations précédentes — cette régression ne permet pas d’identifier séparément les deux ATT.
+Ainsi, la régression est capable d’identifier un effet moyen du traitement après 2018, mais pas les ATT spécifiques à 2018 et 2019.
+
+Pour estimer ce modèle, on doit utiliser les observations pour les années 2017, 2018 et 2019, puis créer une variable indicatrice Postt égale à 1 pour les années post-traitement.
+```{r}
+# Passage en long format 
+data_select <- df %>%
+  select(province_index, G, urban, organic_school_canteen,
+         ln_avg_household_organic_2017,
+         ln_avg_household_organic_2018,
+         ln_avg_household_organic_2019)
+
+panel_df <- data_select %>%
+  pivot_longer(cols = starts_with("ln_avg_household"),
+               names_to = "year",
+               values_to = "ln_organic")
+
+# Création de la variable post-traitement 
+panel_df <- panel_df %>%
+  mutate(post = ifelse(year == "ln_avg_household_organic_2017", 0, 1))
+
+# Estimation de la régression 
+reg_cov <- lm(ln_organic ~ G * post + urban + organic_school_canteen,
+              data = panel_df)
+
+# Erreurs standards clusturisés 
+cov_cluster <- vcovCL(reg_cov, cluster = ~province_index)
+results <- coeftest(reg_cov, vcov = cov_cluster)
+
+print(results)
+
+# ATT
+att <- coef(reg_cov)["G:post"] # le coefficient d’intérêt est l’interaction G:post, qui correspond à𝛿
+se <- sqrt(diag(cov_cluster))["G:post"]
+
+alpha <- 0.05
+z <- qnorm(1 - alpha/2)
+
+ci <- c(att - z * se, att + z * se)
+
+cat("ATT (post 2018) :", round(att,4),
+    "SE :", round(se,4),
+    "IC 95% : [", round(ci[1],4), ";", round(ci[2],4), "]")
+```
+L’estimation de la régression DID avec covariables donne un coefficient associé à l’interaction 
+Gi×Postt égal à 0.8719, avec une erreur standard de 0.0684 et un intervalle de confiance à 95 % égal à [0.7378 ; 1.006]. Ce coefficient correspond à l’effet moyen du traitement sur les municipalités traitées pour la période post-traitement (2018–2019). Cette estimation est cohérente avec les résultats obtenus précédemment, puisqu’elle se situe entre l’ATT estimé pour 2018 et l’effet plus important observé pour l’année 2019.
+
+Comme l’intervalle de confiance ne contient pas zéro, l’effet estimé est statistiquement significatif au seuil de 5 %. Cela suggère que la campagne publicitaire a eu un effet positif sur la consommation de produits biologiques dans les municipalités appartenant aux provinces traitées.
+
+Étant donné que l’outcome est exprimé en logarithme, le coefficient peut être interprété comme une variation approximative en pourcentage. Ainsi, le résultat indique que la consommation moyenne de produits biologiques a augmenté d’environ 87 % de plus dans les municipalités traitées que dans les municipalités de contrôle entre 2017 et la période post-traitement.
+
+Cependant, il est important de rappeler que cette régression impose que l’effet du traitement soit identique en 2018 et en 2019, puisqu’elle utilise une seule variable indicatrice pour la période post-traitement. Par conséquent, l’estimation obtenue correspond à un effet moyen du traitement sur l’ensemble de la période 2018–2019, et ne permet pas de distinguer les effets spécifiques à chacune de ces années.
+
+In the next two questions, you are expected to estimate separately the two ATTs using the OR approach introduced in class in order to obtain alternative treatment effect estimates to what was obtained with Model (1). As a reminder, the OR approach requires estimating a mt(·) function (see the slides for definitions).
+
+### Question 9 : 
+Estimate the mt(·) function using a linear regression approach. Build a 95% confidence interval for each ATT (you may have to resort to the bootstrap). Comment on the results and compare with what you obtained without covariates.
+
+Pour estimer les ATT sous l’hypothèse de Conditional Parallel Trends (CPT), nous utilisons l’approche Outcome Regression (OR).
+Le principe consiste à estimer la fonction : mt(Xi)=E[Yt(0)−Y2017(0)∣Xi,Gi=0] c’est-à-dire l’évolution moyenne de l’outcome entre la période pré-traitement et la période t, conditionnellement aux covariables Xi, pour les municipalités du groupe contrôle.
+Dans notre cas, les covariables sont :urbani et organic_school_canteeni
+Nous estimons cette fonction mt(⋅) à l’aide d’une régression linéaire sur le groupe contrôle, puis nous utilisons le modèle estimé pour prédire l’évolution contrefactuelle de l’outcome pour les municipalités traitées.
+
+L’ATT est alors estimé comme : ATTt = E[Yt − Y2017 ∣ G = 1] − E[m^t(Xi)∣G = 1]
+Autrement dit, on compare l’évolution moyenne observée dans le groupe traité avec l’évolution contrefactuelle prédite pour ces mêmes municipalités à partir du modèle estimé sur le groupe contrôle.
+
+Les intervalles de confiance sont construits à l’aide d’un bootstrap, car l’estimateur implique une étape de prédiction.
+La procédure consiste à tirer des échantillons bootstrap avec remise, recalculer l’ATT pour chaque échantillon, utiliser la distribution empirique des estimateurs bootstrap pour construire un intervalle de confiance à 95 % (méthode percentile).
+
+```{r}
+ATT_CPT_OR <- function(Data) {
+  # Estimate the ATT using an outcome regression approach
+  
+  # Data is a dataframe which contains (from left to right):
+  # - outcome (in a one period-two groups framework) or time difference of
+  #   outcome (in a two periods-two groups DID framework);
+  # - D_1;
+  # - covariates.
+  # The number of rows of Data is the number of individuals.
+  
+  # In dataframe: rename column containing outcome (or time difference in
+  # outcome) as Y and column containing D_1 as D_or_G
+  
+  names(Data)[1:2] <- c("Y", "D_or_G")
+  
+  # Mean of Y in the treatment group
+  
+  mean_Y_treated <-
+    Data |>
+    subset(D_or_G == 1, select = Y, drop = TRUE) |>
+    mean()
+  
+  # Dataframe containing Y and X in the control group
+  
+  Data_Y_X_control <-
+    Data |>
+    subset(D_or_G == 0, select = -D_or_G, drop = TRUE)
+  
+  # Fit a linear model of Y on X in the control group
+  
+  model_Y <- lm(Y ~ ., data = Data_Y_X_control)
+  
+  # Apply linear model prediction in the treatment group and take the mean.
+  # This is an estimate of the mean of Y(0) in the treatment group
+  
+  mean_Y0_for_treated <-
+    predict(model_Y, newdata = subset(Data, D_or_G == 1, select = -c(Y, D_or_G))) |>
+    mean()
+  
+  # Compute ATT_hat and return it
+  
+  ATT_CPT_OR <- mean_Y_treated - mean_Y0_for_treated
+  
+  return(ATT_CPT_OR)
+}
+
+# Fonction pour calculer l'intervalle de confiance à 95% avec bootstrap:
+bootstrap_ATT_CI <- function(Data, B = 1000, alpha = 0.05) {
+
+  # Estimation de l'ATT sur les données complètes
+  ATT_OR <- ATT_CPT_OR(Data)
+
+  n <- nrow(Data)
+  boot_ATT_hat <- numeric(B)  # vecteur pour stocker les estimateurs bootstrap
+
+  for (b in 1:B) {
+    set.seed(b)  # reproductibilité
+    boot_indices <- sample(n, replace = TRUE)
+    boot_data <- Data[boot_indices, ]
+    boot_ATT_hat[b] <- ATT_CPT_OR(boot_data)
+  }
+
+  # Écart-type bootstrap
+  boot_sd <- sd(boot_ATT_hat)
+
+  # Intervalle de confiance normal
+  z_val <- qnorm(1 - alpha/2)
+  CI_normal <- c(ATT_OR - z_val * boot_sd,
+                 ATT_OR + z_val * boot_sd)
+
+  # Intervalle de confiance percentile
+  CI_percentile <- quantile(boot_ATT_hat, probs = c(alpha/2, 1 - alpha/2))
+
+  # Retourner résultats
+  return(list(
+    boot_estimates = boot_ATT_hat,
+    bootstrap_sd = boot_sd,
+    CI_normal = CI_normal,
+    CI_percentile = CI_percentile
+  ))
+}
+
+# Résultats pour 2018 :
+Data_2018 <- subset(
+  df,
+  select = c(delta_organic_2018, G, urban, organic_school_canteen),
+  drop = TRUE
+)
+
+ATT_OR_2018 <- ATT_CPT_OR(Data = Data_2018)
+CI_95_OR_2018 <- bootstrap_ATT_CI(Data = Data_2018)$CI_percentile
+```
+
+On avait pour le UPT ATT=0.581 et ci = [0.558,0.605]. On a avec le CPT ATT = 0.583 et ci = [0.557,0.607]. Ainsi, comme on a déjà pu le constater dans la partie précédente (Question 6), l'ATT avec l'hypothèse UPT est assez bonne et correspond à l'ATT avec covariates.
+
+```{r}
+# Résultats pour 2019 :
+df <- df %>%
+  mutate(delta_organic_2019 = ln_avg_household_organic_2019 - ln_avg_household_organic_2017)
+
+Data_2019 <- subset(
+  df,
+  select = c(delta_organic_2019, G, urban, organic_school_canteen),
+  drop = TRUE
+)
+
+ATT_OR_2019 <- ATT_CPT_OR(Data = Data_2019)
+CI_95_OR_2019 <- bootstrap_ATT_CI(Data = Data_2019)$CI_percentile
+```
+On avait pour le UPT ATT = 1.16 et ci = [1.12,1.21. On a avec le CPT ATT = 1.16 et ci = [1.12,1.2]. Encore une fois, les résultats en hypothèses UPT correspondent à ceux en CPT.
+
+Les résultats obtenus avec l’approche OR sous CPT sont très similaires à ceux obtenus précédemment avec l’hypothèse UPT sans covariables.
+Cela suggère que les covariables considérées (urban et organic_school_canteen) ne jouent pas un rôle majeur dans la différence d’évolution de la consommation entre les municipalités traitées et non traitées.
+En d’autres termes, les estimations DID obtenues sans covariables semblent robustes à l’introduction de ces caractéristiques observables, ce qui renforce la crédibilité des résultats précédents.
+
+### Question 10 : 
+Estimate the mt(·) function using a fully nonparametric approach. Build a 95% confidence interval for each ATT. Comment on the results and compare with what you obtained without covariates.
+
+Nous estimons la fonction mt(⋅) à l’aide d’une approche entièrement non paramétrique. Comme nous disposons de deux covariables binaires, urban et organic_school_canteen, la fonction mt(X) peut être estimée en calculant la moyenne de Y1−Y0 pour chacune des quatre combinaisons possibles de ces covariables dans le groupe de contrôle.
+La fonction suivante permet de calculer l’ATT en utilisant cet estimateur non paramétrique :
+```{r}
+ATT_CPT_OR_methode_2 <- function(Data) {
+  names(Data)[1] <- "Y"
+  
+  # Calculer m_hat pour le groupe de contrôle (G = 0)
+  m_hat_control <- Data %>%
+    filter(G == 0) %>%
+    group_by(urban, organic_school_canteen) %>%
+    summarise(
+      m_hat = mean(Y, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # Fusionner m_hat avec les données originales
+  data_with_m_hat <- Data %>%
+    left_join(m_hat_control, by = c("urban", "organic_school_canteen"))
+  
+  # Calculer la proportion moyenne d'individus traités (p̄)
+  p_bar <- mean(Data$G)
+  
+  # Calculer la première partie de la formule : moyenne de G_i(Y_i1 - Y_i0)
+  part1 <- mean(Data$G * Data$Y, na.rm = TRUE)
+  
+  # Calculer la deuxième partie de la formule : moyenne de G_i * m̂(X_i)
+  part2 <- mean(data_with_m_hat$G * data_with_m_hat$m_hat, na.rm = TRUE)
+  
+  # Calculer ATT_OR
+  ATT_OR <- (1 / p_bar) * (part1 - part2)
+  
+  # Retourner le résultat
+  return(ATT_OR)
+}
+```
+
+Pour construire les intervalles de confiance à 95 %, nous utilisons la même méthode de bootstrap que dans la question précédente, en remplaçant simplement la fonction qui calcule l’ATT.
+```{r}
+bootstrap_ATT_CI_methode_2 <- function(Data, B = 1000, alpha = 0.05) {
+  
+  n <- nrow(Data)
+  
+  for (b in 1:B) {
+    
+    set.seed(b)
+    boot_indices <- sample(n, replace = TRUE)
+    
+    if (b == 1) {
+      boot_ATT_hat <- ATT_CPT_OR_methode_2(Data = Data[boot_indices, ])
+    } else {
+      boot_ATT_hat_temp <- ATT_CPT_OR_methode_2(Data = Data[boot_indices, ])
+      boot_ATT_hat <- Map(c, boot_ATT_hat, boot_ATT_hat_temp)
+    }
+  }
+  
+  boot_ATT_hat <- matrix(unlist(boot_ATT_hat), nrow = B, ncol = 1)
+  colnames(boot_ATT_hat) <- "DID OR"
+  
+  # Écart-type bootstrap
+  boot_sd <- t(as.matrix(apply(boot_ATT_hat, 2, sd)))
+  
+  # Intervalle de confiance percentile
+  quants <- c(alpha / 2, 1 - alpha / 2)
+  quant_boot_CI <- as.matrix(apply(boot_ATT_hat, 2, quantile, probs = quants))
+  
+  colnames(quant_boot_CI) <- "DID OR"
+  rownames(quant_boot_CI) <- c(
+    paste0("Borne inférieure IC niveau ", 1 - alpha),
+    paste0("Borne supérieure IC niveau ", 1 - alpha)
+  )
+  
+  return(list(
+    boot_estimates = boot_ATT_hat,
+    bootstrap_sd = boot_sd,
+    CI_percentile = quant_boot_CI
+  ))
+}
+
+# Résultats pour 2018 :
+
+ATT_OR_2018_methode_2 <- ATT_CPT_OR_methode_2(Data_2018)
+CI_95_OR_2018_methode_2 <- bootstrap_ATT_CI_methode_2(Data = Data_2018)$CI_percentile
+
+# Résultats pour 2019 :
+
+ATT_OR_2019_methode_2 <- ATT_CPT_OR_methode_2(Data_2019)
+CI_95_OR_2019_methode_2 <- bootstrap_ATT_CI_methode_2(Data = Data_2019)$CI_percentile
+```
+Dans les deux cas, nous obtenons les mêmes valeurs d’ATT ainsi que les mêmes intervalles de confiance que précédemment. Cela est rassurant, car cela suggère que la prise en compte des covariables via cette estimation non paramétrique de mt(X) ne modifie pas substantiellement l’estimation de l’effet du traitement. Dans les deux cas on obtient les mêmes valeurs d'ATT et les mêmes intervalles de confiance, ce qui est plutôt rassurant.
+
+### Question 11
+For this last question, focus on years 2017 and 2018. The goal is to detect poten- tial heterogeneity of treatment effects in year 2018 (still using a DID approach with years 2017 and 2018). Give the definition of the CATT function in the present context. Propose a treat- ment effect heterogeneity test based on the CATT function (several possibilities are proposed in the slides, choose the one you prefer). Implement this test and comment on the result.
+
+La Conditional Average Treatment Effect on the Treated (CATT) mesure l'effet moyen du traitement pour les individus traités conditionnellement à certaines covariables.
+Dans notre contexte, avec les covariables 
+X = (urban,organic_school_canteen), la fonction CATT est définie comme :
+
+CATT(x) = E[Y1 − Y0 ∣ G = 1, X = x]
+où :
+Y1 est l’outcome potentiel avec traitement
+Y0 est l’outcome potentiel sans traitement
+G=1 indique les individus traités
+X représente les covariables
+
+Dans un cadre DiD entre 2017 et 2018, cette quantité peut être estimée par :
+CATT(x) = E[ΔY ∣ G = 1,X = x] − E[ΔY∣G = 0,X = x]
+avec ΔY=Y2018−Y2017
+
+Pour tester l’hétérogénéité des effets de traitement, on peut tester l’hypothèse :
+H0:CATT(x) = ATT ∀x contre H1:CATT(x) ≠ ATT pour au moins un x
+Autrement dit, on vérifie si l'effet du traitement varie selon les caractéristiques X.
+Une façon simple de tester cela consiste à estimer une régression DID avec interactions entre le traitement et les covariables.
+Si les coefficients d’interaction sont significatifs, cela indique une hétérogénéité des effets du traitement.
+
+On estime la régression suivante :
+ΔYi=α + βGi + γ1urbani + γ2organic_school_canteeni + δ1(Gi×urbani) + δ2(Gi×organic_school_canteeni) + εi
+Les coefficients δ₁ et δ₂ capturent l’hétérogénéité du traitement.
+
+```{r}
+df <- df %>%
+  mutate(delta_organic_2018 = ln_avg_household_organic_2018 - ln_avg_household_organic_2017)
+
+heterogeneity_model <- lm(
+  delta_organic_2018 ~ G + urban + organic_school_canteen +
+  G:urban + G:organic_school_canteen,
+  data = df
+)
+
+summary(heterogeneity_model)
+```
+Les résultats montrent que :
+
+- Le coefficient associé à l’interaction G×urban est fortement significatif (p<2e−16) et positif (1.015).
+Cela indique que l’effet du traitement est nettement plus élevé dans les municipalités urbaines que dans les municipalités rurales. Il existe donc une forte hétérogénéité de l’effet du traitement selon le caractère urbain de la municipalité.
+
+- En revanche, le coefficient associé à G×organic_school_canteen n’est pas statistiquement significatif (p=0.438). Cela suggère que la présence d’une cantine scolaire biologique ne semble pas modifier significativement l’effet du traitement.
+
+Ainsi, nous rejetons l’hypothèse d’homogénéité des effets du traitement, car au moins une interaction (avec la variable urban) est significative. L’effet de la campagne publicitaire apparaît donc plus important dans les zones urbaines, ce qui est cohérent avec l’idée que la demande pour les produits biologiques est généralement plus forte dans les zones urbaines.
+
+On peut également réaliser un test conjoint de significativité des interactions :
+```{r, message=FALSE}
+library(car)
+
+linearHypothesis(
+  heterogeneity_model,
+  c("G:urban = 0", "G:organic_school_canteen = 0")
+)
+```
+Les résultats du test nous permettent de rejetter très fortement l’hypothèse nulle d’absence d’hétérogénéité. Cela signifie que l’effet du traitement varie selon les caractéristiques des municipalités. Les effets ne sont donc pas homogènes dans la population.
+En cohérence avec les résultats individuels des coefficients, cette hétérogénéité est principalement liée à la variable urban, pour laquelle l’interaction avec le traitement est fortement significative. L’effet de la campagne publicitaire est donc nettement plus important dans les municipalités urbaines que dans les municipalités non urbaines.
+
+# Bibliographie 
+Ha, T. M., Shakur, S., & Pham Do, K. H. (2019). Rural-urban differences in willingness to pay for organic vegetables: Evidence from Vietnam. Appetite, 141, 104273.
